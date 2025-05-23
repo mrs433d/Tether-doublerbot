@@ -1,5 +1,14 @@
-import logging from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup from telegram.ext import ( ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters, ConversationHandler, ContextTypes )
-
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ConversationHandler,
+    ContextTypes,
+)
 --- تنظیمات اولیه ---
 
 TOKEN = "8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo" ADMIN_ID = 6644712689  # آی‌دی عددی ادمین را اینجا وارد کنید

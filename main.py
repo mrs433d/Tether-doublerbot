@@ -1,9 +1,12 @@
+# main.py
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from config import BOT_TOKEN, ADMIN_ID
 import db
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.from_user:
+        return
     keyboard = [
         [InlineKeyboardButton("Deposit", callback_data="deposit")],
         [InlineKeyboardButton("Withdrawal", callback_data="withdrawal")],
@@ -15,12 +18,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id if query.from_user else None
-    if not user_id:
-        await query.message.reply_text("خطا: شناسه کاربری پیدا نشد.")
+    if not query or not query.from_user:
         return
-
+    await query.answer()
+    user_id = query.from_user.id
     data = query.data
 
     if data == "deposit":
@@ -40,11 +41,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.set_user_state(user_id, "awaiting_support")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not user:
-        await update.message.reply_text("خطا: کاربر شناسایی نشد.")
+    if not update.message or not update.effective_user:
         return
-
+    user = update.effective_user
     text = update.message.text.strip()
     state = db.get_user_state(user.id)
 

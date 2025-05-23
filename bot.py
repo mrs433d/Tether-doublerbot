@@ -1,8 +1,17 @@
-import logging import sqlite3
+import logging
+import sqlite3
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup from telegram.ext import ( ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, ContextTypes, ConversationHandler, filters )
+from telegram import Update
+from telegram import InlineKeyboardButton
+from telegram import InlineKeyboardMarkup
 
---- تنظیمات اولیه ---
+from telegram.ext import ApplicationBuilder
+from telegram.ext import CallbackQueryHandler
+from telegram.ext import CommandHandler
+from telegram.ext import MessageHandler
+from telegram.ext import ContextTypes
+from telegram.ext import ConversationHandler
+from telegram.ext import filters
 
 TOKEN = "8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo" ADMIN_ID = 6644712689
 

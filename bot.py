@@ -1,160 +1,118 @@
-import logging
 import sqlite3
+import threading
 import time
-from threading import Thread
+from telegram import Update, Bot
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-from telegram import InlineKeyboardButton
-from telegram import InlineKeyboardMarkup
-from telegram import Message
-from telegram import Update
+TOKEN = '8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo'
+ADMIN_ID = 6644712689  # آیدی عددی ادمین
 
-from telegram.ext import ApplicationBuilder
-from telegram.ext import CallbackQueryHandler
-from telegram.ext import CommandHandler
-from telegram.ext import ContextTypes
-from telegram.ext import ConversationHandler
-from telegram.ext import MessageHandler
-from telegram.ext import filters
+conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+cursor = conn.cursor()
 
-TOKEN = "8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo"
-ADMIN_ID = 6644712689
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT,
+    balance INTEGER DEFAULT 0,
+    referral_id INTEGER
+)
+''')
 
-logging.basicConfig(level=logging.INFO)
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS deposits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    amount INTEGER,
+    timestamp INTEGER
+)
+''')
 
-conn = sqlite3.connect("data.db", check_same_thread=False)
-c = conn.cursor()
-c.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, balance REAL)")
-c.execute("CREATE TABLE IF NOT EXISTS referrals (referrer_id INTEGER, referred_id INTEGER)")
-conn.commit()
-
-DEPOSIT_AMOUNT, DEPOSIT_PROOF, SUPPORT_MESSAGE, ADMIN_REPLY = range(4)
-
-def get_balance(user_id):
-    c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    return row[0] if row else 0.0
-
-def update_balance(user_id, amount):
-    balance = get_balance(user_id)
-    new_balance = balance + amount
-    c.execute("INSERT OR REPLACE INTO users (user_id, username, balance) VALUES (?, ?, ?)", (user_id, "", new_balance))
-    conn.commit()
-
-def set_username(user_id, username):
-    c.execute("UPDATE users SET username=? WHERE user_id=?", (username, user_id))
-    conn.commit()
-
-def get_referral_link(user_id):
-    return f"https://t.me/TetherMinerDouble_Bot?start={user_id}"
-
-def main_menu_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Deposit", callback_data="deposit"),
-         InlineKeyboardButton("Withdraw", callback_data="withdraw")],
-        [InlineKeyboardButton("Balance", callback_data="balance"),
-         InlineKeyboardButton("Referral", callback_data="referral")],
-        [InlineKeyboardButton("Support", callback_data="support")]
-    ])
-
-def back_button(callback_data="menu"):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("بازگشت", callback_data=callback_data)]])
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     user = update.effective_user
-    c.execute("INSERT OR IGNORE INTO users (user_id, username, balance) VALUES (?, ?, ?)", (user.id, user.username or "", 0.0))
-    conn.commit()
-    if context.args:
-        referrer_id = int(context.args[0])
-        if referrer_id != user.id:
-            c.execute("INSERT OR IGNORE INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, user.id))
+    referral_id = int(context.args[0]) if context.args else None
+
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user.id,))
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO users (id, username, referral_id) VALUES (?, ?, ?)",
+                       (user.id, user.username or "", referral_id))
+        conn.commit()
+        if referral_id:
+            context.bot.send_message(referral_id, f"کاربر @{user.username or user.id} از طریق لینک شما وارد ربات شد.")
+    context.bot.send_message(user.id, "به ربات خوش آمدید.")
+
+def deposit(update: Update, context: CallbackContext):
+    update.message.reply_text("مبلغ مورد نظر برای شارژ را وارد کنید.")
+    context.user_data["action"] = "deposit"
+
+def withdraw(update: Update, context: CallbackContext):
+    update.message.reply_text("آدرس کیف پول خود را وارد کنید.")
+    context.user_data["action"] = "withdraw"
+
+def support(update: Update, context: CallbackContext):
+    update.message.reply_text("پیام خود را بنویسید.")
+    context.user_data["action"] = "support"
+
+def message_handler(update: Update, context: CallbackContext):
+    user = update.effective_user
+    text = update.message.text
+    action = context.user_data.get("action")
+
+    if action == "deposit":
+        try:
+            amount = int(text)
+            cursor.execute("INSERT INTO deposits (user_id, amount, timestamp) VALUES (?, ?, ?)",
+                           (user.id, amount, int(time.time())))
             conn.commit()
-            await context.bot.send_message(referrer_id, f"کاربر @{user.username} با لینک دعوت شما عضو شد.")
-    await update.message.reply_text("به ربات خوش آمدید", reply_markup=main_menu_keyboard())
+            context.bot.send_message(ADMIN_ID, f"درخواست واریز از @{user.username or user.id} ({user.id})\nمبلغ: {amount}")
+            update.message.reply_text("درخواست واریز شما ثبت شد. پس از ۱۰ دقیقه موجودی شما دو برابر خواهد شد.")
+            threading.Timer(600, complete_deposit, args=(user.id, amount, context.bot)).start()
+        except:
+            update.message.reply_text("لطفاً یک عدد معتبر وارد کنید.")
+    elif action == "withdraw":
+        context.user_data["action"] = None
+        cursor.execute("SELECT balance FROM users WHERE id = ?", (user.id,))
+        result = cursor.fetchone()
+        if result and result[0] > 0:
+            cursor.execute("UPDATE users SET balance = 0 WHERE id = ?", (user.id,))
+            conn.commit()
+            update.message.reply_text("درخواست برداشت ثبت شد و ظرف ۶۰ دقیقه به آدرس کیف پول شما ارسال خواهد شد.")
+        else:
+            update.message.reply_text("موجودی کافی ندارید.")
+    elif action == "support":
+        context.bot.send_message(ADMIN_ID, f"پیام پشتیبانی از @{user.username or user.id} ({user.id}):\n{text}")
+        update.message.reply_text("پیام شما به پشتیبانی ارسال شد.")
+        context.user_data["action"] = None
+    elif str(user.id) == str(ADMIN_ID) and update.message.reply_to_message:
+        try:
+            ref_id = update.message.reply_to_message.text.split("(")[-1].replace("):", "").strip()
+            context.bot.send_message(ref_id, f"پاسخ پشتیبانی:\n{text}")
+        except:
+            update.message.reply_text("خطا در ارسال پاسخ.")
+    else:
+        update.message.reply_text("دستور ناشناخته.")
 
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
+def complete_deposit(user_id, amount, bot: Bot):
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount * 2, user_id))
+    conn.commit()
+    bot.send_message(user_id, f"{amount * 2} به موجودی شما اضافه شد.")
 
-    if query.data == "menu":
-        await query.message.edit_text("بازگشت به منوی اصلی", reply_markup=main_menu_keyboard())
-    elif query.data == "deposit":
-        await query.message.edit_text("چه مقدار دلار می‌خواهید واریز کنید؟", reply_markup=back_button("menu"))
-        return DEPOSIT_AMOUNT
-    elif query.data == "withdraw":
-        await query.message.edit_text("درخواست برداشت شما ثبت شد و طی ۶۰ دقیقه به آدرس کیف پول شما ارسال خواهد شد.", reply_markup=main_menu_keyboard())
-    elif query.data == "balance":
-        balance = get_balance(user_id)
-        await query.message.edit_text(f"موجودی شما: {balance} دلار", reply_markup=back_button("menu"))
-    elif query.data == "referral":
-        c.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
-        ref_count = c.fetchone()[0]
-        await query.message.edit_text(f"تعداد زیرمجموعه‌ها: {ref_count}\nلینک دعوت: {get_referral_link(user_id)}", reply_markup=back_button("menu"))
-    elif query.data == "support":
-        await query.message.edit_text("پیغام خود را ارسال کنید:", reply_markup=back_button("menu"))
-        return SUPPORT_MESSAGE
-
-async def deposit_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        amount = float(update.message.text)
-        context.user_data["deposit_amount"] = amount
-        await update.message.reply_text("لطفاً رسید یا مدرک پرداخت را ارسال نمایید.", reply_markup=back_button("menu"))
-        return DEPOSIT_PROOF
-    except ValueError:
-        await update.message.reply_text("عدد نامعتبر است.", reply_markup=back_button("menu"))
-        return ConversationHandler.END
-
-def delayed_double_balance(user_id, amount):
-    time.sleep(600)
-    update_balance(user_id, amount * 2)
-
-async def deposit_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    amount = context.user_data.get("deposit_amount", 0)
-    set_username(user.id, user.username or "")
-    await update.message.reply_text("واریز در حال پردازش است و طی ۱۰ دقیقه دو برابر به موجودی شما افزوده خواهد شد.")
-    Thread(target=delayed_double_balance, args=(user.id, amount)).start()
-    return ConversationHandler.END
-
-async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    msg = update.message.text
-    await context.bot.send_message(ADMIN_ID, f"پیام از @{user.username}:\n{msg}", reply_to_message_id=update.message.message_id)
-    await update.message.reply_text("پیام شما ارسال شد.")
-    return ConversationHandler.END
-
-async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.reply_to_message:
-        lines = update.message.reply_to_message.text.split("\n")
-        if lines and lines[0].startswith("پیام از @"):
-            username = lines[0].split("@")[1].replace(":", "")
-            c.execute("SELECT user_id FROM users WHERE username=?", (username,))
-            row = c.fetchone()
-            if row:
-                await context.bot.send_message(row[0], f"پاسخ ادمین:\n{update.message.text}")
-                await update.message.reply_text("پاسخ ارسال شد.")
-    return ConversationHandler.END
+def balance(update: Update, context: CallbackContext):
+    cursor.execute("SELECT balance FROM users WHERE id = ?", (update.effective_user.id,))
+    result = cursor.fetchone()
+    balance = result[0] if result else 0
+    update.message.reply_text(f"موجودی شما: {balance}")
 
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    updater = Updater(TOKEN)
+    dp = updater.dispatcher
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("deposit", deposit))
+    dp.add_handler(CommandHandler("withdraw", withdraw))
+    dp.add_handler(CommandHandler("balance", balance))
+    dp.add_handler(CommandHandler("support", support))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, message_handler))
+    updater.start_polling()
+    updater.idle()
 
-    conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button)],
-        states={
-            DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount)],
-            DEPOSIT_PROOF: [MessageHandler(filters.ALL, deposit_proof)],
-            SUPPORT_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, support_message)],
-            ADMIN_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_reply)],
-        },
-        fallbacks=[]
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_reply))
-
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+main()

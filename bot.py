@@ -1,22 +1,22 @@
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
+)
 from telegram.ext import (
-    ApplicationBuilder,
-    CallbackQueryHandler,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ConversationHandler,
-    ContextTypes,
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    ConversationHandler, MessageHandler, filters, ContextTypes
 )
 
+# توکن و آیدی ادمین
 TOKEN = "8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo"
 ADMIN_ID = 6644712689
 
+# تنظیمات اولیه
 logging.basicConfig(level=logging.INFO)
 user_data = {}
 balances = {}
 
+# وضعیت‌های مکالمه
 DEPOSIT_AMOUNT, DEPOSIT_PROOF, WITHDRAW_AMOUNT, WALLET_ADDRESS, SUPPORT_MESSAGE, ADMIN_REPLY = range(6)
 
 def get_referral_link(user_id):
@@ -92,8 +92,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         case "support":
+            context.user_data["from_support"] = True
             await query.message.edit_text("پیغام خود را ارسال کنید:", reply_markup=back_button())
             return SUPPORT_MESSAGE
+
+        case _ if query.data.startswith("confirm_deposit_"):
+            _, _, user_id, amount = query.data.split("_")
+            user_id = int(user_id)
+            amount = float(amount)
+            balances[user_id] = balances.get(user_id, 0.0) + (amount * 2)
+            await context.bot.send_message(user_id, f"واریز تایید شد. موجودی: {balances[user_id]} دلار")
+            await query.message.edit_text("واریز تایید شد.")
+
+        case _ if query.data.startswith("reject_deposit_"):
+            _, _, user_id = query.data.split("_")
+            user_id = int(user_id)
+            await context.bot.send_message(user_id, "واریز شما رد شد.")
+            await query.message.edit_text("واریز رد شد.")
+
+        case _ if query.data.startswith("confirm_withdraw_"):
+            parts = query.data.split("_", 4)
+            user_id = int(parts[2])
+            amount = float(parts[3])
+            balances[user_id] -= amount
+            await context.bot.send_message(user_id, "برداشت شما تایید شد.")
+            await query.message.edit_text("برداشت تایید شد.")
+
+        case _ if query.data.startswith("reject_withdraw_"):
+            _, _, user_id = query.data.split("_")
+            user_id = int(user_id)
+            await context.bot.send_message(user_id, "برداشت رد شد.")
+            await query.message.edit_text("برداشت رد شد.")
+
+        case _ if query.data.startswith("reply_support_"):
+            target_user_id = int(query.data.split("_")[-1])
+            context.user_data["reply_to"] = target_user_id
+            await query.message.reply_text("متن پاسخ را وارد کنید:")
+            return ADMIN_REPLY
 
 async def deposit_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -128,26 +163,6 @@ async def deposit_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("در حال بررسی توسط ادمین.")
     return ConversationHandler.END
 
-async def confirm_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        data = update.callback_query.data
-        parts = data.split("_")
-        user_id = int(parts[2])
-        amount = float(parts[3])
-        balances[user_id] = balances.get(user_id, 0.0) + (amount * 2)
-        await context.bot.send_message(user_id, text=f"واریز تایید شد. موجودی: {balances[user_id]} دلار")
-        await update.callback_query.message.edit_text("واریز تایید شد.")
-    except Exception as e:
-        await update.callback_query.message.reply_text(f"خطا در تایید: {e}")
-
-async def reject_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = int(update.callback_query.data.split("_")[2])
-        await context.bot.send_message(user_id, "واریز شما رد شد.")
-        await update.callback_query.message.edit_text("واریز رد شد.")
-    except Exception as e:
-        await update.callback_query.message.reply_text(f"خطا در رد کردن: {e}")
-
 async def withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount = float(update.message.text)
@@ -177,32 +192,17 @@ async def wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("درخواست شما برای بررسی ارسال شد.")
     return ConversationHandler.END
 
-async def confirm_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    _, _, user_id, amount, *_ = update.callback_query.data.split("_", 4)
-    user_id, amount = int(user_id), float(amount)
-    balances[user_id] -= amount
-    await context.bot.send_message(user_id, "برداشت شما تایید شد.")
-    await update.callback_query.message.delete()
-
-async def reject_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    _, _, user_id = update.callback_query.data.split("_")
-    await context.bot.send_message(int(user_id), "برداشت رد شد.")
-    await update.callback_query.message.delete()
-
 async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     message = update.message.text
     await context.bot.send_message(ADMIN_ID,
-        f"پیام از {user_id}:\n{message}",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("پاسخ", callback_data=f"reply_support_{user_id}")]])
+        f"پیام از کاربر {user_id}:\n{message}",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("پاسخ", callback_data=f"reply_support_{user_id}")]
+        ])
     )
-    await update.message.reply_text("پیام ارسال شد.")
+    await update.message.reply_text("پیام شما به ادمین ارسال شد.")
     return ConversationHandler.END
-
-async def reply_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["reply_to"] = int(update.callback_query.data.split("_")[-1])
-    await update.callback_query.message.reply_text("متن پاسخ را وارد کنید:")
-    return ADMIN_REPLY
 
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_text = update.message.text
@@ -231,11 +231,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("start", handle_referrals))
     app.add_handler(conv_handler)
-app.add_handler(CallbackQueryHandler(confirm_deposit, pattern="^confirm_deposit_"))
-app.add_handler(CallbackQueryHandler(reject_deposit, pattern="^reject_deposit_"))
-    app.add_handler(CallbackQueryHandler(confirm_withdraw, pattern=r"^confirm_withdraw_"))
-    app.add_handler(CallbackQueryHandler(reject_withdraw, pattern=r"^reject_withdraw_"))
-    app.add_handler(CallbackQueryHandler(reply_support, pattern=r"^reply_support_"))
     app.add_handler(CallbackQueryHandler(button))
 
     app.run_polling()

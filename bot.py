@@ -4,7 +4,6 @@ import logging from telegram import Update, InlineKeyboardButton, InlineKeyboard
 
 TOKEN = "8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo" ADMIN_ID = 6644712689  # آی‌دی عددی ادمین را اینجا وارد کنید
 
---- وضعیت‌ها ---
 
 (DEPOSIT_AMOUNT, DEPOSIT_PROOF, WITHDRAW_AMOUNT, WITHDRAW_WALLET, SUPPORT_MESSAGE, ADMIN_REPLY) = range(6)
 

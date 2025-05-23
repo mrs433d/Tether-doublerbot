@@ -100,7 +100,6 @@ async def handle_admin_reply_button(update: Update, context: ContextTypes.DEFAUL
 
 async def receive_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE): admin_id = update.message.from_user.id user_id = admin_reply_targets.pop(admin_id, None) if user_id: await context.bot.send_message(user_id, f"پاسخ پشتیبانی:\n{update.message.text}") await update.message.reply_text("پاسخ شما ارسال شد.") return ConversationHandler.END
 
---- راه‌اندازی ---
 
 if name == 'main': logging.basicConfig(level=logging.INFO) app = ApplicationBuilder().token(TOKEN).build()
 

@@ -1,8 +1,8 @@
 {
-  "build": {
-    "env": {}
-  },
-  "deploy": {
-    "startCommand": "python bot.py"
+  "plugins": {
+    "python": {
+      "buildCommand": "pip install -r requirements.txt",
+      "startCommand": "python bot.py"
+    }
   }
 }

@@ -11,8 +11,8 @@ from telegram.ext import (
     ContextTypes,
 )
 
-TOKEN = os.environ.get("8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo")
-ADMIN_ID = int(os.environ.get("6644712689", 0))
+TOKEN = "8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo"
+ADMIN_ID = 6644712689
 
 logging.basicConfig(level=logging.INFO)
 user_data = {}

@@ -129,16 +129,24 @@ async def deposit_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def confirm_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    _, _, user_id, amount = update.callback_query.data.split("_")
-    user_id, amount = int(user_id), float(amount)
-    balances[user_id] = balances.get(user_id, 0.0) + (amount * 2)
-    await context.bot.send_message(user_id, text=f"واریز تایید شد. موجودی: {balances[user_id]} دلار")
-    await update.callback_query.message.delete()
+    try:
+        data = update.callback_query.data
+        parts = data.split("_")
+        user_id = int(parts[2])
+        amount = float(parts[3])
+        balances[user_id] = balances.get(user_id, 0.0) + (amount * 2)
+        await context.bot.send_message(user_id, text=f"واریز تایید شد. موجودی: {balances[user_id]} دلار")
+        await update.callback_query.message.edit_text("واریز تایید شد.")
+    except Exception as e:
+        await update.callback_query.message.reply_text(f"خطا در تایید: {e}")
 
 async def reject_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    _, _, user_id = update.callback_query.data.split("_")
-    await context.bot.send_message(int(user_id), text="واریز شما رد شد.")
-    await update.callback_query.message.delete()
+    try:
+        user_id = int(update.callback_query.data.split("_")[2])
+        await context.bot.send_message(user_id, "واریز شما رد شد.")
+        await update.callback_query.message.edit_text("واریز رد شد.")
+    except Exception as e:
+        await update.callback_query.message.reply_text(f"خطا در رد کردن: {e}")
 
 async def withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -223,8 +231,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("start", handle_referrals))
     app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(confirm_deposit, pattern=r"^confirm_deposit_"))
-    app.add_handler(CallbackQueryHandler(reject_deposit, pattern=r"^reject_deposit_"))
+app.add_handler(CallbackQueryHandler(confirm_deposit, pattern="^confirm_deposit_"))
+app.add_handler(CallbackQueryHandler(reject_deposit, pattern="^reject_deposit_"))
     app.add_handler(CallbackQueryHandler(confirm_withdraw, pattern=r"^confirm_withdraw_"))
     app.add_handler(CallbackQueryHandler(reject_withdraw, pattern=r"^reject_withdraw_"))
     app.add_handler(CallbackQueryHandler(reply_support, pattern=r"^reply_support_"))

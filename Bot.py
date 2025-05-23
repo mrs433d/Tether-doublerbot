@@ -2,7 +2,7 @@ import logging from telegram import Update, InlineKeyboardButton, InlineKeyboard
 
 --- تنظیمات اولیه ---
 
-TOKEN = "YOUR_BOT_TOKEN" ADMIN_ID = 123456789  # آی‌دی عددی ادمین را اینجا وارد کنید
+TOKEN = "8047284110:AAGLIH-VVWRcTlwimcTQy0zimkiiBKY3vxo" ADMIN_ID = 6644712689  # آی‌دی عددی ادمین را اینجا وارد کنید
 
 --- وضعیت‌ها ---
 
